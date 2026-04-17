@@ -20,9 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      vote: ${{ steps.filter.outputs.vote }}
-      worker: ${{ steps.filter.outputs.worker }}
-      result: ${{ steps.filter.outputs.result }}
+      matrix: ${{ steps.filter.outputs.changes }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -39,75 +37,38 @@ jobs:
               - 'result/**'
               - '.github/workflows/ci.yml'
 
-  build-vote:
-    name: Build Vote
+  build:
+    name: Build ${{ matrix.service }}
     needs: changes
-    if: needs.changes.outputs.vote == 'true'
+    # Only run the matrix if the changes array isn't empty '[]'
+    if: ${{ needs.changes.outputs.matrix != '[]' && needs.changes.outputs.matrix != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Vote Image
+      - name: Build and Cache Image
         uses: docker/build-push-action@v6
         with:
-          context: ./vote
-          file: ./vote/Dockerfile
+          context: ./${{ matrix.service }}
+          file: ./${{ matrix.service }}/Dockerfile
           push: false
-          tags: example-voting-app-vote:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  build-worker:
-    name: Build Worker
-    needs: changes
-    if: needs.changes.outputs.worker == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Worker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./worker
-          file: ./worker/Dockerfile
-          push: false
-          tags: example-voting-app-worker:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  build-result:
-    name: Build Result
-    needs: changes
-    if: needs.changes.outputs.result == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Result Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./result
-          file: ./result/Dockerfile
-          push: false
-          tags: example-voting-app-result:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: example-voting-app-${{ matrix.service }}:${{ github.sha }}
+          cache-from: |
+            type=gha,scope=${{ matrix.service }}
+            type=gha
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   ci-ok:
     name: CI OK
-    needs: [build-vote, build-worker, build-result]
+    needs: build
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
