@@ -15,11 +15,29 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  pr-title:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 2
+    steps:
+      - name: Check PR title format
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          if ! echo "$TITLE" | grep -qE '^(feat|fix|docs|chore|refactor|test|ci|perf|style|build)(\(.+\))?: .+'; then
+            echo "::error::PR title must follow Conventional Commits format"
+            echo "Expected: type(scope): description"
+            echo "Got: $TITLE"
+            exit 1
+          fi
+
   changes:
     name: Change Detection
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      vote: ${{ steps.filter.outputs.vote }}
+      result: ${{ steps.filter.outputs.result }}
       matrix: ${{ steps.filter.outputs.changes }}
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +54,40 @@ jobs:
             result:
               - 'result/**'
               - '.github/workflows/ci.yml'
+
+  lint-vote:
+    name: Lint Vote (Python)
+    needs: changes
+    if: needs.changes.outputs.vote == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Ruff
+        run: pip install ruff
+      - name: Run Ruff Linter (Check Mode)
+        continue-on-error: true
+        run: ruff check ./vote --output-format=github
+
+  lint-result:
+    name: Lint Result (Node.js)
+    needs: changes
+    if: needs.changes.outputs.result == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run Prettier (Check Mode)
+        continue-on-error: true
+        run: npx prettier --check ./result
 
   build:
     name: Build ${{ matrix.service }}
@@ -68,7 +120,7 @@ jobs:
 
   ci-ok:
     name: CI OK
-    needs: build
+    needs: [build, pr-title, lint-vote, lint-result]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
