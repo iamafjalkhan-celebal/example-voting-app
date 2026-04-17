@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Only cancel PR runs, not main branch runs
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  changes:
+    name: Change Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      vote: ${{ steps.filter.outputs.vote }}
+      worker: ${{ steps.filter.outputs.worker }}
+      result: ${{ steps.filter.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            vote:
+              - 'vote/**'
+              - '.github/workflows/ci.yml'
+            worker:
+              - 'worker/**'
+              - '.github/workflows/ci.yml'
+            result:
+              - 'result/**'
+              - '.github/workflows/ci.yml'
+
+  build-vote:
+    name: Build Vote
+    needs: changes
+    if: needs.changes.outputs.vote == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Vote Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./vote
+          file: ./vote/Dockerfile
+          push: false
+          tags: example-voting-app-vote:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-worker:
+    name: Build Worker
+    needs: changes
+    if: needs.changes.outputs.worker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Worker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./worker
+          file: ./worker/Dockerfile
+          push: false
+          tags: example-voting-app-worker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-result:
+    name: Build Result
+    needs: changes
+    if: needs.changes.outputs.result == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Result Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./result
+          file: ./result/Dockerfile
+          push: false
+          tags: example-voting-app-result:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  ci-ok:
+    name: CI OK
+    needs: [build-vote, build-worker, build-result]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "::error::One or more build jobs failed"
+            exit 1
+          fi
+          echo "All checks passed ✅"

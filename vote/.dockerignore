@@ -1,0 +1,14 @@
+# .dockerignore
+
+# Version control
+.git
+.gitignore
+
+# Dependencies
+__pycache__
+.venv
+venv
+
+# General Dockerignore patterns
+Dockerfile
+.dockerignore

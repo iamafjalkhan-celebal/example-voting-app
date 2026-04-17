@@ -1,0 +1,13 @@
+# .dockerignore
+
+# Version control
+.git
+.gitignore
+
+# Dependencies & Build artifacts
+bin/
+obj/
+
+# General Dockerignore patterns
+Dockerfile
+.dockerignore

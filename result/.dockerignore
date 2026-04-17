@@ -1,0 +1,13 @@
+# .dockerignore
+
+# Version control
+.git
+.gitignore
+
+# Dependencies
+node_modules
+npm-debug.log
+
+# General Dockerignore patterns
+Dockerfile
+.dockerignore
