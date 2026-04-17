@@ -7,11 +7,13 @@ WORKDIR /app
 
 # Copy csproj and restore as distinct layers
 COPY Worker.csproj ./
-RUN dotnet restore
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    dotnet restore
 
 # Copy everything else and build
 COPY . .
-RUN dotnet publish -c Release -o /app/out
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    dotnet publish -c Release -o /app/out
 
 # === Final stage ===
 FROM mcr.microsoft.com/dotnet/runtime:7.0

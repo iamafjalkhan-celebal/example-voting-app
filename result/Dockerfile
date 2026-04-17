@@ -7,7 +7,8 @@ WORKDIR /app
 
 # Cache dependency installation
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund --omit=dev
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund --omit=dev
 
 # === Final stage ===
 FROM node:22-alpine
