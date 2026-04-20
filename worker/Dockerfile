@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # === Build stage ===
-FROM mcr.microsoft.com/dotnet/sdk:7.0 AS builder
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
     dotnet publish -c Release -o /app/out
 
 # === Final stage ===
-FROM mcr.microsoft.com/dotnet/runtime:7.0
+FROM mcr.microsoft.com/dotnet/runtime:8.0
 
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
