@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # === Build stage ===
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 # === Final stage ===
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Create non-root user
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
