@@ -1,0 +1,220 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan — catches new CVEs against existing code
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Secret Detection — always block on leaked secrets
+  # ──────────────────────────────────────────────
+  secret-detection:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for scanning all commits
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────
+  # Dependency Audits — per-language vulnerability scans
+  # ──────────────────────────────────────────────
+  audit-python:
+    name: Audit — Python (vote)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: 'vote/requirements.txt'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit vote dependencies
+        run: pip-audit -r vote/requirements.txt
+
+  audit-node:
+    name: Audit — Node.js (result)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: 'result/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci --prefix result
+
+      - name: Audit result dependencies
+        run: npm audit --prefix result --audit-level=high --omit=dev
+
+  audit-dotnet:
+    name: Audit — .NET (worker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '7.0.x'
+
+      - name: Restore packages
+        run: dotnet restore worker/
+
+      - name: Audit worker dependencies
+        run: dotnet list worker/ package --vulnerable --include-transitive
+
+  # ──────────────────────────────────────────────
+  # SAST — CodeQL for Python, JavaScript, C#
+  # ──────────────────────────────────────────────
+  codeql:
+    name: CodeQL — ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: csharp
+            build-mode: autobuild
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: +security-extended
+
+      # Autobuild for C# — CodeQL observes the compilation
+      - name: Autobuild
+        if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  # ──────────────────────────────────────────────
+  # Container Scanning — Trivy on all 3 service images
+  # ──────────────────────────────────────────────
+  container-scan:
+    name: Container Scan — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [vote, worker, result]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }} image
+        run: |
+          docker build \
+            -t example-voting-app-${{ matrix.service }}:scan \
+            -f ${{ matrix.service }}/Dockerfile \
+            ${{ matrix.service }}/
+
+      - name: Scan with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: example-voting-app-${{ matrix.service }}:scan
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 1  # Fail on critical/high
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: container-${{ matrix.service }}
+
+  # ──────────────────────────────────────────────
+  # SBOM — Software Bill of Materials (main only)
+  # ──────────────────────────────────────────────
+  sbom:
+    name: Generate SBOM — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [vote, worker, result]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }} image
+        run: |
+          docker build \
+            -t example-voting-app-${{ matrix.service }}:sbom \
+            -f ${{ matrix.service }}/Dockerfile \
+            ${{ matrix.service }}/
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: example-voting-app-${{ matrix.service }}:sbom
+          format: spdx-json
+          output-file: sbom-${{ matrix.service }}.spdx.json
+          artifact-name: sbom-${{ matrix.service }}
+
+  # ──────────────────────────────────────────────
+  # Gate — all security checks must pass
+  # ──────────────────────────────────────────────
+  security-ok:
+    name: Security OK
+    needs: [secret-detection, audit-python, audit-node, audit-dotnet, codeql, container-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]] || [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "::error::One or more security checks failed or were cancelled"
+            exit 1
+          fi
+          echo "All security checks passed ✅"
