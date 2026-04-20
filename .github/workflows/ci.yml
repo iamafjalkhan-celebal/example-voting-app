@@ -75,7 +75,6 @@ jobs:
       - name: Install Ruff
         run: pip install ruff
       - name: Run Ruff Linter (Check Mode)
-        continue-on-error: true
         run: ruff check ./vote --output-format=github
 
   lint-result:
@@ -93,7 +92,6 @@ jobs:
           cache: npm
           cache-dependency-path: 'result/package-lock.json'
       - name: Run Prettier (Check Mode)
-        continue-on-error: true
         run: npx prettier --check ./result
 
   lint-worker:
@@ -109,7 +107,6 @@ jobs:
         with:
           dotnet-version: '7.0.x'
       - name: Run dotnet format (Check Mode)
-        continue-on-error: true
         run: dotnet format ./worker --verify-no-changes
 
   build:
